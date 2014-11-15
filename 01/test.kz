@@ -1,0 +1,13 @@
+
+
+var dd
+function ff (a, b, c) {
+    var a;
+    var b;
+    b = 5;
+    while (a < b) {a = a + 1;}
+    if(a < b) ;
+else if( a == 0 ) {}
+else {}
+    return (a=5)*(a*a);
+}
