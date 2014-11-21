@@ -28,3 +28,9 @@ data BinaryOp = Add | Subtract | Multiply | Divide | Mod
 data UnaryOp = Negate
 data CompareOp = Less | Greater | Equal | NotEqual
 
+negateCompareOp :: CompareOp -> CompareOp
+negateCompareOp Less = Greater
+negateCompareOp Greater = Less
+negateCompareOp Equal = NotEqual
+negateCompareOp NotEqual = Equal
+

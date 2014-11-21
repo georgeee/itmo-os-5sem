@@ -8,10 +8,19 @@ import qualified Data.HashSet as S
 import Prelude hiding (log)
 
 type TemporaryId = Int
+type Label = Int
 data DataCell = GlobalVarCell Name | TemporaryCell TemporaryId | ParemeterCell Name
 data FunctionUnit = FunctionUnit Name [Instruction]
 
-data Instruction = Return TemporaryId
+data Instruction = Return TemporaryId | FunctionCall Name [TemporaryId] TemporaryId
+                   | JumpWithCompare Label CompareOp TemporaryId TemporaryId
+                   | JumpWithCompareTo0 Label CompareOp TemporaryId
+                   | Jump Label
+                   | AssignWithBinaryOp BinaryOp TemporaryId TemporaryId
+                   | AssignWithUnaryOp UnaryOp
+                   | AssignLiteral Literal TemporaryId
+                   | Assign TemporaryId TemporaryId
+                   | LabelMark Label
 
 data LogMsgType = ErrMsg | WarnMsg | InfoMsg
 type LogMsg = (String, Maybe Name, LogMsgType)
@@ -25,6 +34,7 @@ data PreAsmState = PreAsmState { functions :: M.HashMap Name Int --FunctionName 
                                , fatalErrorOccured :: Bool
                                , functionName :: Maybe Name
                                , temporaryCounter :: Int
+                               , labelCounter :: Int
                                }
 
 compile :: Program -> Either [LogMsg] ([LogMsg], [FunctionUnit])
@@ -46,6 +56,7 @@ compile (Program gs) = evalState compile' initState
                                   , fatalErrorOccured = False
                                   , functionName = Nothing
                                   , temporaryCounter = 0
+                                  , labelCounter = 0
                                   }
 
 modifyFunctions f = modify $ \s -> s { functions = f $ functions s}
@@ -54,6 +65,15 @@ modifyScopes f = modify $ \s -> s { scopes = f $ scopes s}
 modifyLocals f = modify $ \s -> s { locals = f $ locals s}
 modifyFunctionName f = modify $ \s -> s { functionName = f $ functionName s}
 modifyParameters f = modify $ \s -> s { parameters = f $ parameters s}
+
+allocLabel :: State PreAsmState Label
+allocLabel = do counter <- gets labelCounter
+                modify $ \s -> s { labelCounter = counter + 1 }
+                return counter
+allocTemporary :: State PreAsmState TemporaryId
+allocTemporary = do counter <- gets temporaryCounter
+                    modify $ \s -> s { temporaryCounter = counter + 1 }
+                    return counter
 
 setParameters = modifyParameters . const
 setFunctionName = modifyFunctionName . const
@@ -115,6 +135,10 @@ compileStmt (BlockStmt stmts) = do initScope
 compileStmt (ExprStmt expr) = fmap fst $ compileExpr expr
 compileStmt (ReturnStmt expr) = do (is, tid) <- compileExpr expr
                                    return $ is ++ [Return tid]
+compileStmt (ConditionalStmt elifs elseStmt) = do endifLabel <- allocLabel
+                                                  elifs' <- foldM (\a b -> a ++ (compileElif endifLabel b)) [] elifs
+                                                  
+                                                  
 
 
 compileExpr :: Expr -> State PreAsmState ([Instruction], TemporaryId)
