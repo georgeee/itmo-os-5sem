@@ -113,17 +113,40 @@ remLocal name = do isInitialized <- gets $ isJust . (M.! name) . locals
                    if not isInitialized then warnUnusedVariable name
                                         else return ()
                    modifyLocals $ M.delete name
-addLocal name = do locs <- gets locals
+addLocal name = do params <- gets parameters
+                   if isJust $ M.lookup name
+                      then errorVariableAlreadyDefinedInParams name >> reportFatal
+                      else do locs <- gets locals
+                              case M.lookup name locs of
+                                   Nothing -> modifyLocals $ M.insert name Nothing >> addToScope name
+                                   Just _ -> errorVariableAlreadyDefined name >> reportFatal
+
+-- @TODO Terrible, need ErrorT monad
+getLocal :: Name -> Maybe (Either (State PreAsmState (), TemporaryId))
+getLocal needInited name = do locs <- gets locals
                    case M.lookup name locs of
-                        Nothing -> do modifyLocals $ M.insert name Nothing
-                                      addToScope name
-                        Just _ -> do errorVariableAlreadyDefined name
-                                     reportFatal
+                        Nothing -> return Nothing
+                        Just Nothing -> if needInited
+                                        then return $ Just $ Left $ errorVariableNotInitialized name >> reportFatal
+                                        else allocTemporary >>= return . Just $ Right
+                        Just (Just tid) -> Maybe $ Right tid
+
+get
 
 initScope = modifyScopes ([] :)
 remScope = do scope <- fmap head $ gets scopes
               foldM_ (const remLocal) () scope
               modifyScopes tail
+
+foldConcatM f = foldM (\a b -> (a ++ (f b))) []
+
+jumpWithCompare :: CompareOp -> Expr -> Expr -> Label -> State PreAsmState [Instruction]
+jumpWithCompare op e1 e2 label = do (is1, tid1) <- compileExpr e1
+                                    (is2, tid2) <- compileExpr e2
+                                    return $ is1 ++ is2 ++ [JumpWithCompare label op tid1 tid2]
+
+jumpIfCondition (Condition op e1 e2) = jumpWithCompare op e1 e2
+jumpIfNotCondition (Condition op e1 e2) = jumpWithCompare (negateCompareOp op) e1 e2
 
 
 compileStmt :: Stmt -> State PreAsmState [Instruction]
@@ -135,13 +158,25 @@ compileStmt (BlockStmt stmts) = do initScope
 compileStmt (ExprStmt expr) = fmap fst $ compileExpr expr
 compileStmt (ReturnStmt expr) = do (is, tid) <- compileExpr expr
                                    return $ is ++ [Return tid]
-compileStmt (ConditionalStmt elifs elseStmt) = do endifLabel <- allocLabel
-                                                  elifs' <- foldM (\a b -> a ++ (compileElif endifLabel b)) [] elifs
-                                                  
-                                                  
+compileStmt (ConditionalStmt elifs elseStmt) = do endif <- allocLabel
+                                                  elifs' <- foldConcatM $ compileElif endif
+                                                  elseStmt' <- compileStmt elseStmt
+                                                  return $ elifs' ++ elseStmt ++ [LabelMark endif]
+        where compileElif endif (cond, stmt) = do endElif <- allocLabel
+                                                  is1 <- jumpIfNotCondition cond endElif
+                                                  is2 <- compileStmt stmt
+                                                  return $ is1 ++ is2 ++ [Jump endif, LabelMark endElif]
+compileStmt (LoopStmt cond stmt) = do end <- allocLabel
+                                      start <- allocLabel
+                                      is1 <- jumpIfNotCondition cond end
+                                      is2 <- compileStmt stmt
+                                      return $ [LabelMark start] ++ is1 ++ is2 ++ [Jump start, LabelMark end]
+compileStmt EmptyStmt = return []
+compileStmt (VarDeclStmt (VarDecl name)) = addLocal name >> return []
 
 
 compileExpr :: Expr -> State PreAsmState ([Instruction], TemporaryId)
-compileExpr = undefined
+compileExpr (AssignExpr name expr) = do (is, tid) <- compileExpr expr
+                                        
 
 
