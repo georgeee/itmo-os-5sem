@@ -2,6 +2,9 @@ module PreAsm where
 import Lang
 import Data.Maybe (isJust)
 import Control.Monad.State.Lazy
+import Control.Monad.Identity
+import Control.Monad.Writer.Lazy
+import Control.Monad.Error
 import Control.Monad
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as S
@@ -30,15 +33,25 @@ data PreAsmState = PreAsmState { functions :: M.HashMap Name Int --FunctionName 
                                , locals :: M.HashMap Name (Maybe TemporaryId) -- VarName -> is_initialized
                                , scopes :: [[Name]]
                                , units :: [FunctionUnit]
-                               , msgLog :: [LogMsg]
-                               , fatalErrorOccured :: Bool
                                , functionName :: Maybe Name
                                , temporaryCounter :: Int
                                , labelCounter :: Int
                                }
 
-compile :: Program -> Either [LogMsg] ([LogMsg], [FunctionUnit])
-compile (Program gs) = evalState compile' initState
+
+type ErrorMsg = String
+
+type Compilation a = StateT PreAsmState (ErrorT ErrorMsg (WriterT [LogMsg] Identity)) a
+runCompilation :: PreAsmState -> Compilation a -> (Either ErrorMsg (a, PreAsmState), [LogMsg])
+runCompilation st comp = runIdentity $ runWriterT $ runErrorT $ runStateT comp st
+
+evalCompilation st comp = let (res, log) = runCompilation st comp
+                          in  (case res of
+                                Left err -> Left err
+                                Right (r, st) -> Right r, log)
+
+compile :: Program -> (Either ErrorMsg [FunctionUnit], [LogMsg])
+compile (Program gs) = evalCompilation compile' initState
     where compile' = do foldM_ (const compileGlobalDecl) () gs
                         errOccured <- gets fatalErrorOccured
                         if errOccured then do msgs <- gets msgLog
@@ -66,11 +79,11 @@ modifyLocals f = modify $ \s -> s { locals = f $ locals s}
 modifyFunctionName f = modify $ \s -> s { functionName = f $ functionName s}
 modifyParameters f = modify $ \s -> s { parameters = f $ parameters s}
 
-allocLabel :: State PreAsmState Label
+allocLabel :: Compilation Label
 allocLabel = do counter <- gets labelCounter
                 modify $ \s -> s { labelCounter = counter + 1 }
                 return counter
-allocTemporary :: State PreAsmState TemporaryId
+allocTemporary :: Compilation TemporaryId
 allocTemporary = do counter <- gets temporaryCounter
                     modify $ \s -> s { temporaryCounter = counter + 1 }
                     return counter
@@ -80,7 +93,7 @@ setFunctionName = modifyFunctionName . const
 
 addUnit unit = modify (\s -> s {units = unit : units s})
 
-compileGlobalDecl :: GlobalDecl -> State PreAsmState ()
+compileGlobalDecl :: GlobalDecl -> Compilation ()
 compileGlobalDecl (GlobalVar (VarDecl name)) = modifyGlobals $ S.insert name
 compileGlobalDecl (ExternFunction (ExternFunctionDecl name params)) = modifyFunctions $ M.insert name (length params)
 compileGlobalDecl (Function (FunctionDecl name params stmt)) = do modifyFunctions $ M.insert name (length params)
@@ -89,20 +102,16 @@ compileGlobalDecl (Function (FunctionDecl name params stmt)) = do modifyFunction
                                                                   is <- compileStmt stmt
                                                                   setFunctionName $ Nothing
                                                                   setParameters $ S.empty
-                                                                  errOccured <- gets fatalErrorOccured
-                                                                  if not errOccured then addUnit $ FunctionUnit name is
-                                                                                    else return ()
+                                                                  addUnit $ FunctionUnit name is
 
-log :: String -> LogMsgType -> State PreAsmState ()
+log :: String -> LogMsgType -> Compilation ()
 log msg msgType = do fName <- gets functionName
-                     modify $ \s -> s { msgLog = (msg, fName, msgType) : msgLog s }
+                     tell [(msg, fName, msgType)]
 
 logWarn = flip log WarnMsg
 logErr = flip log ErrMsg
 logInfo = flip log InfoMsg
 
-reportFatal :: State PreAsmState ()
-reportFatal = modify $ \s -> s {fatalErrorOccured = True }
 
 warnUnusedVariable name = logWarn $ "Unused variable : " ++ name
 errorVariableAlreadyDefined name = logErr $ "Variable " ++ name ++ " is already defined in function"
@@ -126,7 +135,7 @@ remScope = do scope <- fmap head $ gets scopes
               modifyScopes tail
 
 
-compileStmt :: Stmt -> State PreAsmState [Instruction]
+compileStmt :: Stmt -> Compilation [Instruction]
 compileStmt (BlockStmt stmts) = do initScope
                                    foldM_ f [] stmts
                                    remScope
@@ -141,7 +150,7 @@ compileStmt (ConditionalStmt elifs elseStmt) = do endifLabel <- allocLabel
                                                   
 
 
-compileExpr :: Expr -> State PreAsmState ([Instruction], TemporaryId)
+compileExpr :: Expr -> Compilation ([Instruction], TemporaryId)
 compileExpr = undefined
 
 
