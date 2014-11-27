@@ -21,18 +21,10 @@ data FunctionUnit = FunctionUnit Name [Instruction]
 data OperandPair = TT TemporaryId TemporaryId | TM TemporaryId DataCell | MT DataCell TemporaryId
                     | TL TemporaryId Literal | ML DataCell Literal
 
-composeOpPairT :: TemporaryId -> ExtendedDataCell -> OperandPair
-composeOpPairT tid (TemporaryCell tid2) = TT tid tid2
-composeOpPairT tid (EGlobalVarCell name) = TM tid $ GlobalVarCell name
-composeOpPairT tid (EParameterCell name) = TM tid $ ParameterCell name
-composeOpPairM :: ExtendedDataCell -> TemporaryId -> OperandPair
-composeOpPairM (TemporaryCell tid) tid2 = TT tid tid2
-composeOpPairM (EGlobalVarCell name) tid = MT (GlobalVarCell name) tid
-composeOpPairM (EParameterCell name) tid = MT (ParameterCell name) tid
-
 data BinaryOp' = Arith BinaryOp | Assign
 
-data Instruction = Return TemporaryId | FunctionCall Name [TemporaryId] TemporaryId
+data Instruction = Return TemporaryId
+                   | FunctionCall Name [TemporaryId] TemporaryId
                    | JumpWithCompare Label CompareOp TemporaryId TemporaryId
                    | JumpWithCompareTo0 Label CompareOp TemporaryId
                    | Jump Label
@@ -225,6 +217,16 @@ compileExpr :: Expr -> Compilation ([Instruction], TemporaryId)
 compileExpr e = do tid <- allocTemporary
                    is <- compileExpr' e tid
                    return (is, tid)
+
+composeOpPairT :: TemporaryId -> ExtendedDataCell -> OperandPair
+composeOpPairT tid (TemporaryCell tid2) = TT tid tid2
+composeOpPairT tid (EGlobalVarCell name) = TM tid $ GlobalVarCell name
+composeOpPairT tid (EParameterCell name) = TM tid $ ParameterCell name
+composeOpPairM :: ExtendedDataCell -> TemporaryId -> OperandPair
+composeOpPairM (TemporaryCell tid) tid2 = TT tid tid2
+composeOpPairM (EGlobalVarCell name) tid = MT (GlobalVarCell name) tid
+composeOpPairM (EParameterCell name) tid = MT (ParameterCell name) tid
+
 
 compileExpr' :: Expr -> TemporaryId -> Compilation [Instruction]
 compileExpr' (AssignExpr name e) tid = do varCell <- requireVar False name
