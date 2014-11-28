@@ -44,8 +44,7 @@ data BinaryOp' = Arith BinaryOp | Assign
 
 data Instruction = Return TemporaryId
                    | FunctionCall Name [TemporaryId] TemporaryId
-                   | JumpWithCompare Label CompareOp TemporaryId TemporaryId
-                   | JumpWithCompareTo0 Label CompareOp TemporaryId
+                   | JumpWithCompare Label CompareOp OperandPair
                    | Jump Label
                    | BinaryOperation BinaryOp' OperandPair
                    | UnaryOperation UnaryOp TemporaryId
@@ -53,8 +52,8 @@ data Instruction = Return TemporaryId
 instance Show Instruction where
     show (Return tid) = "return " ++ (showTid tid)
     show (FunctionCall name args tid) = (showTid tid) ++ " = " ++ name ++ "(" ++ (intercalate ", " $ map (\x -> (showTid x)) args) ++ ")"
-    show (JumpWithCompare label op tid tid2) = "jump if " ++ (showTid tid) ++ " " ++ (show op) ++ " " ++ (showTid tid2) ++ "  to label" ++ (show label)
-    show (JumpWithCompareTo0 label op tid) = "jump if " ++ (showTid tid) ++ " " ++ (show op) ++ " 0 to label" ++ (show label)
+    show (JumpWithCompare label op opPair) = let (operand1, operand2) = showOpPair opPair
+                                              in "jump if " ++ operand1 ++ " " ++ (show op) ++ " " ++ operand2 ++ "  to label" ++ (show label)
     show (Jump label) = "jump to label" ++ (show label)
     show (BinaryOperation Assign opPair) = let (operand1, operand2) = showOpPair opPair
                                             in operand1 ++ " = " ++ operand2
@@ -216,10 +215,17 @@ mapConcatM f (a:as) = do ss <- f a
                          return $ ss ++ rest
 mapConcatM f [] = return []
 
+-- @TODO we can optimize this function even more
 jumpWithCompare :: CompareOp -> Expr -> Expr -> Label -> Compilation [Instruction]
+jumpWithCompare op (LiteralExpr lit) (LiteralExpr lit2) label = return $ if evalCompareOp op lit lit2
+                                                                            then [Jump label]
+                                                                            else []
+jumpWithCompare op e1@(LiteralExpr lit) e2 label = jumpWithCompare (negateCompareOp op) e2 e1 label
+jumpWithCompare op e1 (LiteralExpr lit) label = do (is1, tid1) <- compileExpr e1
+                                                   return [JumpWithCompare label op $ TL tid1 lit]
 jumpWithCompare op e1 e2 label = do (is1, tid1) <- compileExpr e1
                                     (is2, tid2) <- compileExpr e2
-                                    return $ is1 ++ is2 ++ [JumpWithCompare label op tid1 tid2]
+                                    return $ is1 ++ is2 ++ [JumpWithCompare label op $ TT tid1 tid2]
 
 jumpIfCondition (Condition op e1 e2) = jumpWithCompare op e1 e2
 jumpIfNotCondition (Condition op e1 e2) = jumpWithCompare (negateCompareOp op) e1 e2

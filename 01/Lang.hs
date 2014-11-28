@@ -34,6 +34,12 @@ negateCompareOp Greater = Less
 negateCompareOp Equal = NotEqual
 negateCompareOp NotEqual = Equal
 
+evalCompareOp :: (Ord a) => CompareOp -> (a -> a -> Bool)
+evalCompareOp Less = (<)
+evalCompareOp Greater = (>)
+evalCompareOp Equal = (==)
+evalCompareOp NotEqual = (/=)
+
 
 instance Show BinaryOp where
     show Add = "+"
