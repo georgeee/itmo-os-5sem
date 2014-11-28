@@ -34,3 +34,20 @@ negateCompareOp Greater = Less
 negateCompareOp Equal = NotEqual
 negateCompareOp NotEqual = Equal
 
+
+instance Show BinaryOp where
+    show Add = "+"
+    show Subtract = "-"
+    show Multiply = "*"
+    show Divide = "/"
+    show Mod  = "%"
+instance Show UnaryOp where
+    show Negate = "-"
+instance Show CompareOp where
+    show Less = "<"
+    show Greater = ">"
+    show Equal = "=="
+    show NotEqual = "!="
+instance Show VarDecl where
+    show (VarDecl name) = "var " ++ name
+

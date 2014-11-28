@@ -136,14 +136,14 @@ expr = level0Expr
 parseProgram :: String -> Either ParseError Program
 parseProgram = parse program "(unknown src)"
 
-test :: (Printable a) => SourceName -> Parsec String () a -> IO ()
-test f p = readFile f >>= test'' f p
-
-
-test' :: (Printable a) => Parsec String () a -> String -> IO ()
-test' = test'' "(unknown)"
-
-test'' :: (Printable a) => SourceName -> Parsec String () a -> String -> IO ()
-test'' f p s = putStrLn $ case parse p f s of
-                Left err -> "Error " ++ show err
-                Right res -> Printable.print 0 res
+-- test :: (Printable a) => SourceName -> Parsec String () a -> IO ()
+-- test f p = readFile f >>= test'' f p
+-- 
+-- 
+-- test' :: (Printable a) => Parsec String () a -> String -> IO ()
+-- test' = test'' "(unknown)"
+-- 
+-- test'' :: (Printable a) => SourceName -> Parsec String () a -> String -> IO ()
+-- test'' f p s = putStrLn $ case parse p f s of
+--                 Left err -> "Error " ++ show err
+--                 Right res -> Printable.print 0 res

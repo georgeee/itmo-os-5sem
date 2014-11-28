@@ -1,15 +1,18 @@
-module PreAsm where
+module PreAsm (ErrorType(..), LogMsg, LogMsgType(..), PreAsmState(..), TemporaryId(..),
+               ParameterId(..), Label(..), DataCell(..), FunctionUnit(..),
+               OperandPair(..), BinaryOp'(..), Instruction(..), compilePreAsm) where
 import Lang
 import Data.Maybe (isJust)
 import Control.Monad.State.Lazy
 import Control.Monad.Identity
 import Control.Monad.Writer.Lazy
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as S
 import Data.Hashable (Hashable)
 import Prelude hiding (log)
+import Data.List (intercalate)
 
 type TemporaryId = Int
 type ParameterId = Int
@@ -18,8 +21,24 @@ data ExtendedDataCell = EGlobalVarCell Name | TemporaryCell TemporaryId | EParam
 data DataCell = GlobalVarCell Name | ParameterCell ParameterId
 data FunctionUnit = FunctionUnit Name [Instruction]
 
+instance Show FunctionUnit where
+    show (FunctionUnit name is) = "function " ++ name ++ " (" ++ (show $ length is) ++ " instructions) \n  " ++ (intercalate "\n   " $ map show is)
+
 data OperandPair = TT TemporaryId TemporaryId | TM TemporaryId DataCell | MT DataCell TemporaryId
                     | TL TemporaryId Literal | ML DataCell Literal
+
+showTid tid = "<" ++ (show tid) ++ ">"
+instance Show DataCell where
+    show (GlobalVarCell name) = "[global "++ name ++ "]"
+    show (ParameterCell paramId) = "[param #" ++ (show paramId) ++ "]"
+
+showOpPair :: OperandPair -> (String, String)
+showOpPair (TT tid tid2) = ((showTid tid), (showTid tid2))
+showOpPair (TM tid cell) = ((showTid tid), (show cell))
+showOpPair (MT cell tid) = ((show cell), (showTid tid))
+showOpPair (TL tid lit) = ((showTid tid), (show lit))
+showOpPair (ML cell lit) = ((show cell), (show lit))
+
 
 data BinaryOp' = Arith BinaryOp | Assign
 
@@ -31,8 +50,23 @@ data Instruction = Return TemporaryId
                    | BinaryOperation BinaryOp' OperandPair
                    | UnaryOperation UnaryOp TemporaryId
                    | LabelMark Label
+instance Show Instruction where
+    show (Return tid) = "return " ++ (showTid tid)
+    show (FunctionCall name args tid) = (showTid tid) ++ " = " ++ name ++ "(" ++ (intercalate ", " $ map (\x -> (showTid x)) args) ++ ")"
+    show (JumpWithCompare label op tid tid2) = "jump if " ++ (showTid tid) ++ " " ++ (show op) ++ " " ++ (showTid tid2) ++ "  to label" ++ (show label)
+    show (JumpWithCompareTo0 label op tid) = "jump if " ++ (showTid tid) ++ " " ++ (show op) ++ " 0 to label" ++ (show label)
+    show (Jump label) = "jump to label" ++ (show label)
+    show (BinaryOperation Assign opPair) = let (operand1, operand2) = showOpPair opPair
+                                            in operand1 ++ " = " ++ operand2
+    show (BinaryOperation (Arith op) opPair) = let (operand1, operand2) = showOpPair opPair
+                                                in operand1 ++ " = " ++ operand1 ++ " " ++ (show op) ++ " " ++ operand2
+    show (UnaryOperation op tid) = (showTid tid) ++ " = " ++ (show op) ++ (showTid tid)
+    show (LabelMark label) = "label" ++ (show label) ++ ":"
+
+
 
 data LogMsgType = ErrMsg | WarnMsg | InfoMsg
+    deriving Show
 type LogMsg = (String, Maybe Name, LogMsgType)
 data PreAsmState = PreAsmState { functions :: M.HashMap Name Int --FunctionName -> Parameter count
                                , globals :: S.HashSet Name
@@ -45,14 +79,16 @@ data PreAsmState = PreAsmState { functions :: M.HashMap Name Int --FunctionName 
                                , labelCounter :: Int
                                }
 
+instance Show PreAsmState where
+    show st = intercalate "\n" $ (map ("; global var " ++) $ S.toList $ globals st) ++ ["\n\n"] ++ (map show $ units st)
+
 
 data ErrorType = VariableAlreadyDefined Name | VariableAlreadyDefinedInParams Name | VariableNotInitialized Name | CustomError String | VariableNotExist Name
-instance Error ErrorType where
-    strMsg = CustomError
+        deriving (Show)
 
-type Compilation a = StateT PreAsmState (ErrorT ErrorType (WriterT [LogMsg] Identity)) a
+type Compilation a = StateT PreAsmState (ExceptT ErrorType (WriterT [LogMsg] Identity)) a
 runCompilation :: Compilation a -> PreAsmState -> (Either ErrorType (a, PreAsmState), [LogMsg])
-runCompilation comp st = runIdentity $ runWriterT $ runErrorT $ runStateT comp st
+runCompilation comp st = runIdentity $ runWriterT $ runExceptT $ runStateT comp st
 
 
 execCompilation comp st = let (res, log) = runCompilation comp st
@@ -64,8 +100,8 @@ evalCompilation comp st = let (res, log) = runCompilation comp st
                                 Left err -> Left err
                                 Right (r, st) -> Right r, log)
 
-compile :: Program -> (Either ErrorType PreAsmState, [LogMsg])
-compile (Program gs) = execCompilation compile' initState
+compilePreAsm :: Program -> (Either ErrorType PreAsmState, [LogMsg])
+compilePreAsm (Program gs) = execCompilation compile' initState
     where compile' = foldM_ (const compileGlobalDecl) () gs
           initState = PreAsmState { functions = M.empty
                                   , globals = S.empty
@@ -97,11 +133,12 @@ allocTemporary = do counter <- gets temporaryCounter
 setParameters = modifyParameters . const
 setFunctionName = modifyFunctionName . const
 
-addUnit unit = modify (\s -> s {units = unit : units s})
+addUnit unit = modify (\s -> s {units = units s ++ [unit]})
 
 compileGlobalDecl :: GlobalDecl -> Compilation ()
 compileGlobalDecl (GlobalVar (VarDecl name)) = modifyGlobals $ S.insert name
 compileGlobalDecl (ExternFunction (ExternFunctionDecl name params)) = modifyFunctions $ M.insert name (length params)
+-- @TODO add checking if function doesn't exist
 compileGlobalDecl (Function (FunctionDecl name params stmt)) = do modifyFunctions $ M.insert name (length params)
                                                                   setParameters $ M.fromList $ zip params [1..]
                                                                   setFunctionName $ Just name
@@ -177,6 +214,7 @@ mapConcatM :: Monad m => (a -> m [b]) -> [a] -> m [b]
 mapConcatM f (a:as) = do ss <- f a
                          rest <- mapConcatM f as
                          return $ ss ++ rest
+mapConcatM f [] = return []
 
 jumpWithCompare :: CompareOp -> Expr -> Expr -> Label -> Compilation [Instruction]
 jumpWithCompare op e1 e2 label = do (is1, tid1) <- compileExpr e1
@@ -189,9 +227,9 @@ jumpIfNotCondition (Condition op e1 e2) = jumpWithCompare (negateCompareOp op) e
 
 compileStmt :: Stmt -> Compilation [Instruction]
 compileStmt (BlockStmt stmts) = do initScope
-                                   foldM_ f [] stmts
+                                   is <- foldM f [] stmts
                                    remScope
-                                   return []
+                                   return is
                              where f is stmt = fmap (is ++) $ compileStmt stmt
 compileStmt (ExprStmt expr) = fmap fst $ compileExpr expr
 compileStmt (ReturnStmt expr) = do (is, tid) <- compileExpr expr
@@ -246,6 +284,7 @@ compileExpr' (BinaryExpr op e1 e2) tid = do is1 <- compileExpr' e1 tid
                                                            return (is1 ++ is2 ++ [BinaryOperation (Arith op) $ TT tid tid2])
 compileExpr' (UnaryExpr op e) tid = do is <- compileExpr' e tid
                                        return $ is ++ [UnaryOperation op tid]
+-- @TODO add checking function declaration (param count)
 compileExpr' (CallExpr name argExprs) tid = do args <- mapM compileExpr argExprs
                                                let (iss, tids) = unzip args
                                                return $ (concat iss) ++ [FunctionCall name tids tid]

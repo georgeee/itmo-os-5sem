@@ -42,19 +42,13 @@ instance Printable Integer where
     print _ = show
 instance Printable Condition where
     print i (Condition op e1 e2) = print i e1 ++ " " ++ print i op ++ " " ++ print i e2
+
 instance Printable BinaryOp where
-    print _ Add = "+"
-    print _ Subtract = "-"
-    print _ Multiply = "*"
-    print _ Divide = "/"
-    print _ Mod  = "%"
+    print _ = show
 instance Printable UnaryOp where
-    print _ Negate = "-"
+    print _ = show
 instance Printable CompareOp where
-    print _ Less = "<"
-    print _ Greater = ">"
-    print _ Equal = "=="
-    print _ NotEqual = "!="
+    print _ = show
 instance Printable VarDecl where
-    print _ (VarDecl name) = "var " ++ name
+    print _ = show
 
